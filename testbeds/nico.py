@@ -1,9 +1,9 @@
 from testbeds.base import *
 
-class NicoTestBed(BaseTestBed):
+class NICOTestBed(BaseTestBed):
 
-    def __init__(self, sample_size, rep_model="classifier", mode="severity"):
-        super().__init__(sample_size)
+    def __init__(self, sample_size, mode="severity", sampler="RandomSampler", batch_size=16):
+        super().__init__( mode=mode, sampler=sampler, batch_size=batch_size)
         self.trans = transforms.Compose([
                                                  transforms.Resize((512, 512)),
                                                  transforms.ToTensor(), ])
@@ -16,11 +16,9 @@ class NicoTestBed(BaseTestBed):
         # self.ind, self.ind_test = random_split(self.ind, [0.5, 0.5])
 
         self.classifier = ResNetClassifier.load_from_checkpoint(
-           "train_logs/NICO/checkpoints/epoch=279-step=175000.ckpt", num_classes=num_classes,
+           "classifier_logs/NICO/checkpoints/epoch=279-step=175000.ckpt", num_classes=num_classes,
             resnet_version=101).to("cuda").eval()
-        self.glow = Glow(3, 32, 4).cuda().eval()
-        self.glow.load_state_dict(torch.load("glow_logs/NICODataset_checkpoint/model_040001.pt"))
-        self.rep_model = self.glow
+        self.glow = GlowPL.load_from_checkpoint("glow_logs/NICODataset/checkpoints/epoch=499-step=312500.ckpt",  in_channel=3, n_flow=32, n_block=4, conv_lu=True, affine=True).cuda().eval()
         self.mode=mode
 
     def get_ood_dict(self):

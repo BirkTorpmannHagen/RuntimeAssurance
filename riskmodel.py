@@ -1,12 +1,12 @@
 import numpy as np
 
-from components import LossEstimator
-from rateestimators import BernoulliEstimator
+from rateestimators import ErrorAdjustmentEstimator
 
 MISDIAGNOSIS = 635+6100
-UNNECESSARY_INTERVENTION = 635+0.2*MISDIAGNOSIS
-NECESSARY_INTERVENTION = 635+0.2*MISDIAGNOSIS - 50#arbitrary, but lower than unnecessary intervention
 CORRECT_DIAGNOSIS = 635 # cost of correct diagnosis during AI screening
+UNNECESSARY_INTERVENTION = 0.8*CORRECT_DIAGNOSIS+0.2*MISDIAGNOSIS
+NECESSARY_INTERVENTION = UNNECESSARY_INTERVENTION
+
 
 
 class RiskNode:
@@ -22,7 +22,7 @@ class RiskNode:
 
 
 class RiskModel:
-    def __init__(self, estimator = BernoulliEstimator):
+    def __init__(self, estimator = ErrorAdjustmentEstimator):
         """
                 Binary Tree defined by the following structure:
                 ood+/- -> dsd+/- -> prediction+/- -> consequence
@@ -178,7 +178,7 @@ class DetectorEventTree(RiskModel):
               f"\t\t\t {self.root.right.left.left.consequence:.2f}, \t\t\t {self.root.right.left.right.consequence:.2f}, \t\t\t {self.root.right.right.left.consequence:.2f}, \t\t\t {self.root.right.right.right.consequence:.2f}")
 
 class BaseEventTree(RiskModel):
-    def __init__(self, dsd_tpr, dsd_tnr, ood_acc, ind_acc, estimator=BernoulliEstimator):
+    def __init__(self, dsd_tpr, dsd_tnr, ood_acc, ind_acc, estimator=ErrorAdjustmentEstimator):
         super().__init__(estimator=estimator)
         self.ood_acc = ood_acc
         self.ind_acc = ind_acc

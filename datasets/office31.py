@@ -1,7 +1,6 @@
 import os
 
 from numpy.lib.index_tricks import index_exp
-from progressbar.terminal.colors import indian_red
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, Subset, ConcatDataset
 from torchvision.datasets import ImageFolder
@@ -25,7 +24,6 @@ class Office31Dataset(Dataset):
         ind_train_idx, ind_val_idx = train_test_split(
             range(len(full_ind_dataset)),
             test_size=0.2,
-            stratify=ind_targets,
             random_state=42  # Ensures determinism
         )
         ind_test_idx = ind_val_idx[:len(ind_val_idx)//2]
@@ -49,10 +47,11 @@ class Office31Dataset(Dataset):
             self.dataset.transform = val_transform
 
     def __len__(self):
+        # return 64 #debug
         return len(self.dataset)
 
     def __getitem__(self, index):
-        return self.dataset[index]
+        return *self.dataset[index], index
 
 
 def build_office31_dataset(root, train_transform, val_transform, ind_context="amazon"):

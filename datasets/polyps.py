@@ -19,7 +19,8 @@ class KvasirSegmentationDataset(Dataset):
     def __init__(self, path, train_alb, val_alb, split="train"):
         super(KvasirSegmentationDataset, self).__init__()
         self.path = path
-        self.fnames = listdir(join(self.path,"segmented-images", "images"))
+        self.fnames = sorted(listdir(join(self.path,"segmented-images", "images")))
+
         self.split = split
         self.train_transforms = train_alb
         self.val_transforms = val_alb
@@ -60,7 +61,7 @@ class KvasirSegmentationDataset(Dataset):
             image, mask = self.val_transforms(image=image, mask=mask).values()
         image, mask = transforms.ToTensor()(Image.fromarray(image)), transforms.ToTensor()(Image.fromarray(mask))
         mask = torch.mean(mask,dim=0,keepdim=True).int()
-        return image,mask
+        return image,mask, index
 
 
 class EtisDataset(Dataset):
@@ -86,7 +87,7 @@ class EtisDataset(Dataset):
         mask = np.asarray(Image.open(mask_path))
         image, mask = self.transforms(image=image, mask=mask).values()
 
-        return self.tensor(image), self.tensor(mask)[0].unsqueeze(0).int()
+        return self.tensor(image), self.tensor(mask)[0].unsqueeze(0).int(), i
 
 
 class CVC_ClinicDB(Dataset):
@@ -109,7 +110,7 @@ class CVC_ClinicDB(Dataset):
         mask = np.asarray(Image.open(mask_path))
         image, mask = self.transforms(image=image, mask=mask).values()
         # mask = (mask>0.5).int()[0].unsqueeze(0)
-        return self.tensor(image), self.tensor(mask)[0].unsqueeze(0).int()
+        return self.tensor(image), self.tensor(mask)[0].unsqueeze(0).int(), i
 
     def __len__(self):
         # return 16 #debug
@@ -120,7 +121,7 @@ class EndoCV2020(Dataset):
     def __init__(self, root_directory, tans):
         super(EndoCV2020, self).__init__()
         self.root = root_directory
-        self.mask_fnames = listdir(join(self.root, "masksPerClass", "polyp"))
+        self.mask_fnames = sorted(listdir(join(self.root, "masksPerClass", "polyp")))
         self.mask_locs = [join(self.root, "masksPerClass", "polyp", i) for i in self.mask_fnames]
         self.img_locs = [join(self.root, "originalImages", i.replace("_polyp", "").replace(".tif", ".jpg")) for i in
                          self.mask_fnames]
@@ -133,7 +134,7 @@ class EndoCV2020(Dataset):
         mask = Image.open(self.mask_locs[i])
         image = self.trans(image)
         mask = self.trans(mask)
-        return image, mask[0].unsqueeze(0).int()
+        return image, mask[0].unsqueeze(0).int(), i
 
     def __len__(self):
         # return 16 #debug

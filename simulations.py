@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 from decimal import getcontext
 
-from components import LossEstimator, Trace, SyntheticOODDetector, SplitLossEstimator, OODDetector
-from rateestimators import BernoulliEstimator
+from components import Trace, SyntheticOODDetector, OODDetector
+from rateestimators import ErrorAdjustmentEstimator, SimpleEstimator
 from riskmodel import DetectorEventTree, BaseEventTree
 
 np.set_printoptions(precision=4, suppress=True)
@@ -22,8 +22,9 @@ class Simulator:
     Abstract simulator class
 """
 
-    def __init__(self, df, ood_test_shift, ood_val_shift, estimator=BernoulliEstimator, trace_length=100,
+    def __init__(self, df, ood_test_shift, ood_val_shift, estimator=ErrorAdjustmentEstimator, calibrate_by_fold=True, trace_length=100,
                  use_synth=True, **kwargs):
+
         self.df = df
 
         self.ood_test_shift = ood_test_shift
@@ -31,17 +32,32 @@ class Simulator:
         # self.ood_detector = OODDetector(df)
         if use_synth:
             self.ood_detector = SyntheticOODDetector(kwargs["dsd_tpr"], kwargs["dsd_tnr"])
+            dsd_tpr = kwargs["dsd_tpr"]
+            dsd_tnr = kwargs["dsd_tnr"]
         else:
             self.ood_detector = OODDetector(df, ood_val_shift)
+            train_df = df[(df["shift"] == ood_val_shift) | (df["shift"] == "ind_val")]
+
+            self.ood_detector = OODDetector(train_df, "val_optimal")
+            dsd_tpr, dsd_tnr = self.ood_detector.get_likelihood()
+
+
         self.ood_val_acc = self.get_predictor_accuracy(self.ood_val_shift)
         self.ood_test_acc = self.get_predictor_accuracy(self.ood_test_shift)
         self.ind_val_acc = self.get_predictor_accuracy("ind_val")
         self.ind_test_acc = self.get_predictor_accuracy("ind_test")
-        dsd_tnr, dsd_tpr = self.ood_detector.get_likelihood()
+
+
+        if dsd_tnr+dsd_tpr <= 1:
+            print("Using simple estimator since TPR+TNR<=1")
+            estimator = SimpleEstimator
+
         ind_ndsd_acc = self.get_conditional_prediction_likelihood_estimates("ind_val", False)
         ind_dsd_acc = self.get_conditional_prediction_likelihood_estimates("ind_val", True)
         ood_ndsd_acc = self.get_conditional_prediction_likelihood_estimates(ood_val_shift, False)
         ood_dsd_acc = self.get_conditional_prediction_likelihood_estimates(ood_val_shift, True)
+
+
         self.detector_tree = DetectorEventTree(dsd_tpr, dsd_tnr, ind_ndsd_acc, ind_dsd_acc, ood_ndsd_acc, ood_dsd_acc,
                                                estimator=estimator)
         self.base_tree = BaseEventTree(dsd_tpr=dsd_tpr, dsd_tnr=dsd_tnr, ood_acc=self.ood_val_acc,
@@ -94,8 +110,8 @@ class UniformBatchSimulator(Simulator):
     """
     permits conditional data collection simulating model + ood detector
     """
-    def __init__(self, df, ood_test_shift, ood_val_shift,  estimator=BernoulliEstimator, trace_length=100, use_synth=True, **kwargs):
-        super().__init__(df, ood_test_shift, ood_val_shift, estimator, trace_length, use_synth, **kwargs)
+    def __init__(self, df, ood_test_shift, ood_val_shift, estimator=ErrorAdjustmentEstimator, trace_length=100, use_synth=True, calibrated_by_fold=True, **kwargs):
+        super().__init__(df, ood_test_shift, ood_val_shift, estimator,calibrated_by_fold, trace_length, use_synth, **kwargs)
 
 
     def sample_a_uniform_batch(self, shift):
@@ -107,12 +123,17 @@ class UniformBatchSimulator(Simulator):
             batch = self.sample_a_uniform_batch(self.ood_test_shift)
         else:
             batch = self.sample_a_uniform_batch("ind_test")
+
+
         ood_pred = self.ood_detector.predict(batch)
+        if isinstance(ood_pred, pd.Series):
+            ood_pred = ood_pred.values[0] #dirty hack
         batch["ood_pred"] = ood_pred #todo, this is a hack
         # self.loss_trace_for_eval.update(batch["loss"])
         self.dsd_trace.update(int(ood_pred))
 
         if index>self.dsd_trace.trace_length: #update lambda after trace length
+
             self.detector_tree.update_rate(self.dsd_trace.trace)
             self.base_tree.update_rate(self.dsd_trace.trace)
 
@@ -129,8 +150,8 @@ class UniformBatchSimulator(Simulator):
                                            "True Risk": [true_dsd_risk, true_base_risk], "E[f(x)=y]":[current_expected_accuracy, current_base_expected_accuracy],
                                            "Accuracy": [accuracy, accuracy], "ood_pred": [ood_pred, ood_pred], "is_ood": [shifted, shifted],
                                            "Estimated Rate":[self.detector_tree.rate, self.base_tree.rate],
-                 "ind_acc": [self.ind_val_acc, self.ind_val_acc], "ood_val_acc": [self.ood_val_acc, self.ood_val_acc], "ood_test_acc": [self.ood_test_acc, self.ood_test_acc]})
-
+                 "ind_acc": [self.ind_val_acc, self.ind_val_acc], "ood_val_acc": [self.ood_val_acc, self.ood_val_acc], "ood_test_acc": [self.ood_test_acc, self.ood_test_acc],
+                                  "tpr": [self.detector_tree.dsd_tpr, self.detector_tree.dsd_tpr], "tnr": [self.detector_tree.dsd_tnr, self.detector_tree.dsd_tnr]})
             return data
 
 
@@ -145,12 +166,14 @@ class UniformBatchSimulator(Simulator):
             if current_horizon_results is not None:
                 results.append(current_horizon_results)
                 if len(results)>self.dsd_trace.trace_length:
-
                     df = pd.concat(results[-self.dsd_trace.trace_length:]) #get the data corresponding to the last trace length
                     results_trace.append(df.groupby(["Tree"]).mean().reset_index())
         results_df = pd.concat(results_trace)
         results_df["Rate Error"] = np.abs(results_df["Estimated Rate"] - rate_groundtruth)
+        results_df["Risk Error"] = results_df["Risk Estimate"] - results_df["True Risk"]
+
         results_df["Accuracy Error"] = np.abs(results_df["E[f(x)=y]"] - results_df["Accuracy"])
+        results_df["% Accuracy Error"] = results_df["Accuracy Error"] / results_df["Accuracy"]
         return results_df
 
 

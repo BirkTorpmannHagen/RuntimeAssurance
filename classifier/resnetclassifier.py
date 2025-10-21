@@ -1,10 +1,12 @@
 
+
 import sys
 import warnings
 from pathlib import Path
 from argparse import ArgumentParser
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 warnings.filterwarnings('ignore')
 
@@ -45,20 +47,21 @@ class ResNetClassifier(pl.LightningModule):
         self.resnet_model.fc = nn.Linear(linear_size, num_classes)
 
         self.latent_dim = self.get_encoding_size(-2)
-        self.acc = Accuracy(task="multiclass", num_classes=num_classes, top_k=max(self.num_classes//5,1))
+        self.acc = Accuracy(task="multiclass", num_classes=num_classes, top_k=1)
 
 
     def forward(self, X):
         return self.resnet_model(X)
 
     def get_encoding_size(self, depth):
-        dummy = torch.zeros((1,3,512,512))
-        return torch.nn.Sequential(*list(self.resnet_model.children())[:-1])(dummy).flatten(1).shape[-1]
+        dummy = torch.randn((1,3,512,512))
+        return self.get_encoding(dummy).shape[-1]
     def get_encoding(self, X, depth=-2):
-        return torch.nn.Sequential(*list(self.resnet_model.children())[:-1])(X).flatten(1)
+        encoding =  torch.nn.Sequential(*list(self.resnet_model.children())[:-1])(X).flatten(1)
+        return encoding
 
-    def get_funny(self, X):
-        return torch.nn.Sequential(*list(self.resnet_model.children())[:-1])(X)
+    # def get_funny(self, X):
+    #     return torch.nn.Sequential(*list(self.resnet_model.children())[:-1])(X)
 
     def compute_loss(self, x, y):
         return self.criterion(self(x), y)

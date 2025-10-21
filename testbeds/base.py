@@ -20,6 +20,8 @@ from glow.plmodules import GlowPL
 from glow.model import Glow
 from classifier.resnetclassifier import ResNetClassifier
 import os
+from bias_samplers import RandomSampler, ClassOrderSampler, ClusterSampler, SequentialSampler
+
 
 from torchmetrics import Accuracy
 
@@ -27,15 +29,25 @@ class BaseTestBed:
     """
     Abstract class for testbeds; feel free to override for your own datasets!
     """
-    def __init__(self, num_workers=5, mode="normal"):
+    def __init__(self, batch_size, num_workers=5, mode="normal", sampler="RandomSampler"):
         self.mode=mode
         self.num_workers=5
-        self.noise_range = np.arange(0.0, 0.35, 0.05)[1:]
-        self.batch_size = 16
+        self.noise_range = np.linspace(0,0.5, 21)[1:]
+
+
+        self.batch_size = batch_size
+        self.sampler = sampler
 
 
     def dl(self, dataset):
-        return DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, drop_last=True)
+        if self.sampler=="RandomSampler":
+            return DataLoader(dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
+        elif self.sampler=="SequentialSampler":
+            return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True, sampler=SequentialSampler(dataset))
+        elif self.sampler=="ClassOrderSampler":
+            return DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, drop_last=True, sampler=ClassOrderSampler(dataset, num_classes))
+        elif self.sampler=="ClusterSampler":
+            return DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, drop_last=True, sampler=ClusterSampler(dataset, self.classifier, self.batch_size))
 
 
     def ind_loader(self):
@@ -72,7 +84,8 @@ class BaseTestBed:
                         noise in self.noise_range]
             loaders = dict(zip(["hue_{}".format(noise_val) for noise_val in self.noise_range], ood_sets))
         elif self.mode=="fgsm":
-            ood_sets = [self.dl(TransformedDataset(self.ind_test, targeted_fgsm, "fgsm", noise)) for
+            self.num_workers=1
+            ood_sets = [self.dl(TransformedDataset(self.ind_test, targeted_fgsm, "fgsm", noise, model=self.classifier)) for
                         noise in self.noise_range]
             loaders = dict(zip(["adv_{}".format(noise_val) for noise_val in self.noise_range], ood_sets))
             return loaders
@@ -89,24 +102,50 @@ class BaseTestBed:
             ood_sets = [self.dl(TransformedDataset(self.ind_test, smear, "smear", noise)) for
                         noise in self.noise_range]
             loaders = dict(zip(["smear_{}".format(noise_val) for noise_val in self.noise_range], ood_sets))
-        else:
+        elif self.mode=="contrast":
+            ood_sets = [self.dl(TransformedDataset(self.ind_test, contrast, "contrast", noise)) for noise in self.noise_range]
+            loaders = dict(zip(["contrast_{}".format(noise_val) for noise_val in self.noise_range], ood_sets))
+        elif self.mode=="normal":
             loaders =  self.get_ood_dict()
+        else:
+            raise NotImplementedError
         return loaders
 
 
 
-    def compute_losses(self, loader):
-        losses = np.zeros((len(loader), self.batch_size))
-        #criterion = nn.CrossEntropyLoss(reduction="none")  # still computing loss for each sample, just batched
-        criterion = Accuracy(task="multiclass", num_classes=self.num_classes, top_k=5).cuda()
+    def compute_losses(self, loader, reduce=False):
+        if reduce:
+            losses = torch.zeros((len(loader), 4))  # loss, acc, class, index
+        else:
+            losses = torch.zeros((len(loader), self.batch_size, 4)) # loss, acc, class, index
+
+        loss_fn = nn.CrossEntropyLoss(reduction="none")  # still computing loss for each sample, just batched
 
         for i, data in tqdm(enumerate(loader), total=len(loader)):
             with (torch.no_grad()):
                 x = data[0].to("cuda")
                 y = data[1].to("cuda")
                 yhat = self.classifier(x)
-                vec = (torch.argmax(yhat, dim=1)==y).cpu().numpy().astype(int)
-                losses[i]=vec
-                # losses[i] = criterion(yhat, y).cpu().numpy()
-        return losses.flatten()
+                acc = (torch.argmax(yhat, dim=1)==y).float().cpu()
+                loss = loss_fn(yhat, y).cpu()
+                idx = data[2]
 
+                if reduce:
+                    losses[i] = torch.stack([loss.mean(), acc.mean(), idx.float().mean(), y.float().cpu().mean()])
+                else:
+                    losses[i] = torch.stack([loss, acc, idx, y.cpu()], dim=1)
+                # losses[i]=vec
+        if reduce:
+            return losses.numpy()
+
+        return losses.flatten(0, 1).numpy()
+
+    def get_encodings(self, dataloader):
+        features = np.zeros((len(dataloader), self.batch_size, self.classifier.latent_dim))
+        for i, data in tqdm(enumerate(dataloader), total=len(dataloader), desc="Computing Encodings"):
+            x = data[0].cuda()
+            with torch.no_grad():
+                out = self.classifier.get_encoding(x).detach().cpu().numpy()
+            features[i]=out
+        features = features.reshape((len(dataloader)*self.batch_size, self.classifier.latent_dim))
+        return features

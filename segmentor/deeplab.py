@@ -1,28 +1,23 @@
 
-from segmentation_models_pytorch import DeepLabV3Plus
+from segmentation_models_pytorch import DeepLabV3Plus, UnetPlusPlus, Segformer
 from segmentation_models_pytorch.losses import JaccardLoss
 from segmentation_models_pytorch.metrics import get_stats, iou_score
 import warnings
-from segmentation_models_pytorch.base import SegmentationHead
 
 warnings.filterwarnings('ignore')
 
 # torch and lightning imports
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.models as models
+
 from torch.optim import SGD, Adam
-from torchvision import transforms
-from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader
+
 import pytorch_lightning as pl
 
 
 
 class SegmentationModel(pl.LightningModule):
     def __init__(self, transfer=True,
-                 optimizer='adam', lr=1e-3, batch_size=16):
+                 optimizer='adam', lr=1e-3, batch_size=16, model_name="deeplabv3plus"):
         super().__init__()
 
         self.__dict__.update(locals())
@@ -34,7 +29,14 @@ class SegmentationModel(pl.LightningModule):
         self.optimizer = optimizers[optimizer]
         # instantiate loss criterion
         # Using a pretrained ResNet backbone
-        self.segmentor = DeepLabV3Plus()
+        if model_name=="deeplabv3plus":
+            self.segmentor = DeepLabV3Plus()
+        elif model_name=="unet":
+            self.segmentor = UnetPlusPlus()
+        elif model_name=="segformer":
+            self.segmentor = Segformer()
+
+
         self.encoder = self.segmentor.encoder
         # replace final layer for fine tuning
         self.decoder = self.segmentor.decoder
@@ -53,10 +55,13 @@ class SegmentationModel(pl.LightningModule):
         code =  torch.mean(self.segmentor.encoder(X)[-2], [-1, -2]).flatten(1).squeeze(-1)
         return code
 
-    def compute_loss(self, x, y):
+    def compute_loss(self, x, y, reduce=True):
         out = self.segmentor(x)
+        if reduce: #s
+            return self.criterion(out, y)
+        else:
+            return torch.Tensor([self.criterion(out[i], y[i]) for i in range(out.shape[0])])
 
-        return self.criterion(out, y)
 
     def configure_optimizers(self):
         return self.optimizer(self.parameters(), lr=self.lr)

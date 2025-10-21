@@ -2,8 +2,8 @@ from testbeds.base import *
 
 
 class OfficeHomeTestBed(BaseTestBed):
-    def __init__(self, sample_size, rep_model="vae", mode="severity"):
-        super().__init__(sample_size)
+    def __init__(self, sample_size, rep_model="vae", mode="severity", sampler="RandomSampler", batch_size=16):
+        super().__init__( mode=mode, sampler=sampler, batch_size=batch_size)
         self.trans = transforms.Compose([
             transforms.Resize((512, 512)),
             transforms.ToTensor(), ])
@@ -13,10 +13,10 @@ class OfficeHomeTestBed(BaseTestBed):
         # self.ind, self.ind_test = random_split(self.ind, [0.5, 0.5])
 
         self.classifier = ResNetClassifier.load_from_checkpoint(
-            "train_logs/OfficeHome/checkpoints/epoch=193-step=42292.ckpt", num_classes=num_classes,
+            "classifier_logs/OfficeHome/checkpoints/epoch=7-step=1744.ckpt", num_classes=num_classes,
             resnet_version=101).to("cuda").eval()
-        self.glow = Glow(3, 32, 4).cuda().eval()
-        self.glow.load_state_dict(torch.load("glow_logs/OfficeHome_checkpoint/model_040001.pt"))
+        self.glow = GlowPL.load_from_checkpoint("glow_logs/OfficeHome/checkpoints/epoch=99-step=21800.ckpt", in_channel=3, n_flow=32, n_block=4, conv_lu=True, affine=True).cuda().eval()
+
         # self.rep_model = self.glow
         # self.vae = VanillaVAE(3, 512).to("cuda").eval()
         # self.rep_model = self.vae
